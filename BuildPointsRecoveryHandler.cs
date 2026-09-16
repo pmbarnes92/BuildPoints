@@ -1,0 +1,57 @@
+﻿using UnityEngine;
+
+namespace BuildPoints
+{
+	/// <summary>
+	/// Refunds Build Points when a vessel is recovered. Cost is computed
+	/// with the same formula used to charge the vessel at launch
+	/// (BuildPointsCalculator.TryGetRecoveredVesselCost), then scaled by
+	/// the "Recovery refund (%)" setting. onVesselRecovered fires for
+	/// both the full recovery dialog and "quick recover" (right-clicking
+	/// a landed/splashed vessel near the Space Center), so both are
+	/// covered without extra hooks.
+	///
+	/// NOTE: verify GameEvents.onVesselRecovered's signature against your
+	/// KSP version — it's EventData&lt;ProtoVessel, bool&gt; as of 1.12.x,
+	/// with the bool indicating a "quick" recovery.
+	/// </summary>
+	[KSPAddon(KSPAddon.Startup.EveryScene, true)]
+	public class BuildPointsRecoveryHandler : MonoBehaviour
+	{
+		private static bool subscribed;
+
+		public void Awake()
+		{
+			if (subscribed) { Destroy(gameObject); return; }
+			subscribed = true;
+			DontDestroyOnLoad(gameObject);
+			GameEvents.onVesselRecovered.Add(OnVesselRecovered);
+		}
+
+		public void OnDestroy()
+		{
+			GameEvents.onVesselRecovered.Remove(OnVesselRecovered);
+		}
+
+		private void OnVesselRecovered(ProtoVessel protoVessel, bool quick)
+		{
+			var scenario = BuildPointsScenario.Instance;
+			if (scenario == null) return;
+
+			var settings = HighLogic.CurrentGame?.Parameters?.CustomParams<BuildPointsSettings>();
+			if (settings == null || settings.recoveryRefundPercent <= 0f) return;
+
+			if (!BuildPointsCalculator.TryGetRecoveredVesselCost(protoVessel, out double bpCost, out _, out _))
+				return;
+
+			double refund = bpCost * (settings.recoveryRefundPercent / 100.0);
+			if (refund <= 0) return;
+
+			scenario.Accrue(refund);
+
+			ScreenMessages.PostScreenMessage(
+				$"Build Points refunded: +{refund:0.0} BP",
+				4f, ScreenMessageStyle.UPPER_CENTER);
+		}
+	}
+}
