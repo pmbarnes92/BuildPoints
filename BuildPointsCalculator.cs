@@ -3,11 +3,32 @@ using System.Collections.Generic;
 namespace BuildPoints
 {
 	/// <summary>
+	/// Breakdown of a vessel's Build Points cost by component, so UI (the
+	/// VAB/SPH toolbar window) can show each contributor separately instead
+	/// of just the total. fundsCost/massTonnes are the vessel's raw funds
+	/// cost and mass (not yet converted to BP) — useful for display.
+	/// </summary>
+	public struct BuildPointsCostBreakdown
+	{
+		public double constant;       // BP, from settings.constantCost directly
+		public double funds;          // BP, from fundsCost * fundsCostWeight
+		public double partCountCost;  // BP, from partCount * costPerPart
+		public double mass;           // BP, from massTonnes * massCostWeight
+		public double fundsCost;      // raw vessel funds cost (dry + resources)
+		public double massTonnes;     // raw vessel mass (dry + resources)
+		public int partCount;
+		public double total;          // sum of the four BP components, floored at minimumCraftCost
+	}
+
+	/// <summary>
 	/// Computes the Build Points cost of a vessel — either the one
 	/// currently in the editor (charged on launch) or a just-recovered
 	/// one (refunded on recovery). Both paths share the same cost
 	/// formula and the same part-summing helper so they can never drift
-	/// out of sync with each other.
+	/// out of sync with each other. Both also read this save's settings
+	/// via BuildPointsScenario.GetActiveSettings() rather than the global
+	/// defaults, so the cost formula respects whatever the player set for
+	/// this game.
 	/// </summary>
 	public static class BuildPointsCalculator
 	{
@@ -17,11 +38,28 @@ namespace BuildPoints
 			fundsCost = 0;
 			partCount = 0;
 
+			if (!TryGetShipCostBreakdown(out BuildPointsCostBreakdown breakdown)) return false;
+
+			bpCost = breakdown.total;
+			fundsCost = breakdown.fundsCost;
+			partCount = breakdown.partCount;
+			return true;
+		}
+
+		/// <summary>
+		/// Same as TryGetCurrentShipCost, but returns every component of
+		/// the cost formula separately (used by the VAB/SPH "Build Points
+		/// Cost" toolbar window).
+		/// </summary>
+		public static bool TryGetShipCostBreakdown(out BuildPointsCostBreakdown breakdown)
+		{
+			breakdown = default;
+
 			if (!HighLogic.LoadedSceneIsEditor || EditorLogic.fetch == null || EditorLogic.fetch.ship == null)
 				return false;
 
 			var ship = EditorLogic.fetch.ship;
-			partCount = ship.parts.Count;
+			int partCount = ship.parts.Count;
 			if (partCount == 0) return false;
 
 			var availableParts = new List<AvailablePart>(partCount);
@@ -31,12 +69,9 @@ namespace BuildPoints
 				availableParts.Add(part.partInfo);
 			}
 
-			SumPartCostsAndMass(availableParts, out fundsCost, out double massTonnes);
+			SumPartCostsAndMass(availableParts, out double fundsCost, out double massTonnes);
 
-			var settings = HighLogic.CurrentGame?.Parameters?.CustomParams<BuildPointsSettings>();
-			if (settings == null) return false;
-
-			bpCost = ComputeCost(settings, fundsCost, partCount, massTonnes);
+			breakdown = BuildBreakdown(BuildPointsScenario.GetActiveSettings(), fundsCost, partCount, massTonnes);
 			return true;
 		}
 
@@ -77,10 +112,8 @@ namespace BuildPoints
 
 			SumPartCostsAndMass(availableParts, out fundsCost, out double massTonnes);
 
-			var settings = HighLogic.CurrentGame?.Parameters?.CustomParams<BuildPointsSettings>();
-			if (settings == null) return false;
-
-			bpCost = ComputeCost(settings, fundsCost, partCount, massTonnes);
+			var breakdown = BuildBreakdown(BuildPointsScenario.GetActiveSettings(), fundsCost, partCount, massTonnes);
+			bpCost = breakdown.total;
 			return true;
 		}
 
@@ -91,13 +124,22 @@ namespace BuildPoints
 		/// result by recoveryRefundPercent — the floor applies before that
 		/// percentage, same as it would at launch.
 		/// </summary>
-		private static double ComputeCost(BuildPointsSettings settings, double fundsCost, int partCount, double massTonnes)
+		private static BuildPointsCostBreakdown BuildBreakdown(BuildPointsSettingsValues settings, double fundsCost, int partCount, double massTonnes)
 		{
-			double raw = settings.constantCost
-				+ (fundsCost * settings.fundsCostWeight)
-				+ (partCount * settings.costPerPart)
-				+ (massTonnes * settings.massCostWeight);
-			return raw < settings.minimumCraftCost ? settings.minimumCraftCost : raw;
+			var b = new BuildPointsCostBreakdown
+			{
+				constant = settings.constantCost,
+				funds = fundsCost * settings.fundsCostWeight,
+				partCountCost = partCount * settings.costPerPart,
+				mass = massTonnes * settings.massCostWeight,
+				fundsCost = fundsCost,
+				massTonnes = massTonnes,
+				partCount = partCount
+			};
+
+			double raw = b.constant + b.funds + b.partCountCost + b.mass;
+			b.total = raw < settings.minimumCraftCost ? settings.minimumCraftCost : raw;
+			return b;
 		}
 
 		// Stock helper ShipConstruction.GetPartCostsAndMass is per-part, not

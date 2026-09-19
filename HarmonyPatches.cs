@@ -4,16 +4,22 @@ using UnityEngine;
 namespace BuildPoints
 {
     /// <summary>
-    /// Installs the Harmony patches once at game start. Harmony is the
-    /// standard, safe way to intercept a stock method (here, the editor's
-    /// Launch action) without hunting for a public GameEvent that fires
-    /// early enough to cancel the launch outright.
+    /// Installs the Harmony patches once at game start, and loads
+    /// BuildPointsConfig.Defaults from
+    /// GameData/BuildPoints/PluginData/settings.cfg (creating it with
+    /// built-in defaults on first run) so it's ready before any save needs
+    /// to seed its own settings from it. Harmony is the standard, safe way
+    /// to intercept a stock method (here, the editor's Launch action)
+    /// without hunting for a public GameEvent that fires early enough to
+    /// cancel the launch outright.
     /// </summary>
     [KSPAddon(KSPAddon.Startup.MainMenu, true)]
     public class BuildPointsBootstrap : MonoBehaviour
     {
         public void Awake()
         {
+            BuildPointsConfig.EnsureLoaded();
+
             var harmony = new Harmony("com.buildpoints.mod");
             harmony.PatchAll();
             DontDestroyOnLoad(this);
@@ -56,13 +62,14 @@ namespace BuildPoints
             {
                 // Craft costs more than the player could ever bank. Warping
                 // won't help — the craft itself needs to change, or the cap
-                // needs to be raised in Difficulty Settings.
+                // needs to be raised in the Build Points Settings window.
                 PopupDialog.SpawnPopupDialog(
                     new MultiOptionDialog(
                         "buildPointsImpossible",
                         $"Vessel cost: {bpCost:0.0} BP\nMaximum capacity: {cap:0.0} BP\n\n" +
                         "This craft costs more Build Points than you can ever bank. Reduce its cost, " +
-                        "mass, or part count, or raise the Build Points cap in Difficulty Settings.",
+                        "mass, or part count, or raise the Build Points cap in the Settings window " +
+                        "(toolbar button, Space Center).",
                         "Craft Exceeds Build Points Capacity",
                         HighLogic.UISkin,
                         new DialogGUIButton("OK", () => { })),
@@ -78,15 +85,15 @@ namespace BuildPoints
             string body = $"Vessel cost: {bpCost:0.0} BP\nAvailable: {have:0.0} / {cap:0.0} BP\n\n" +
                 (canWarp
                     ? $"At the current accrual rate, you'll have enough in about {FormatDuration(secondsNeeded)}."
-                    : "Your current accrual rate is 0, so waiting won't help — check Difficulty Settings or upgrade your VAB/SPH.");
+                    : "Your current accrual rate is 0, so waiting won't help — check the Build Points " +
+                      "Settings window or upgrade your VAB/SPH.");
 
             var buttons = canWarp
                 ? new[]
                   {
                       new DialogGUIButton("Warp Until Affordable", () =>
                       {
-                          var settings = HighLogic.CurrentGame?.Parameters?.CustomParams<BuildPointsSettings>();
-                          bool instant = settings != null && settings.useInstantTimeSkip;
+                          bool instant = scenario.Settings.useInstantTimeSkip;
 
                           if (instant)
                           {

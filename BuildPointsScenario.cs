@@ -8,6 +8,12 @@ namespace BuildPoints
     /// points over time. Runs in every relevant scene so the balance keeps
     /// ticking whether the player is at the Space Center, in the editor, or
     /// in flight.
+    ///
+    /// Also owns this save's own copy of the mod's settings (Settings) —
+    /// seeded from BuildPointsConfig.Defaults the first time this save is
+    /// created, then persisted and edited independently of the global
+    /// settings.cfg file from here on, the same way CurrentPoints already
+    /// persists per-save.
     /// </summary>
     [KSPScenario(ScenarioCreationOptions.AddToAllGames,
         GameScenes.SPACECENTER, GameScenes.EDITOR, GameScenes.FLIGHT, GameScenes.TRACKSTATION)]
@@ -18,6 +24,9 @@ namespace BuildPoints
         /// <summary>Current banked Build Points.</summary>
         public double CurrentPoints { get; private set; }
 
+        /// <summary>This save's own settings — see class remarks.</summary>
+        public BuildPointsSettingsValues Settings { get; private set; }
+
         // Universal time (in-game seconds) at which we last accrued points.
         // Using UT rather than real time means accrual is warp-safe and
         // doesn't grant free points while the game is paused/closed.
@@ -26,6 +35,33 @@ namespace BuildPoints
         public override void OnAwake()
         {
             Instance = this;
+            BuildPointsConfig.EnsureLoaded();
+            if (Settings == null) Settings = BuildPointsConfig.Defaults.Clone();
+        }
+
+        /// <summary>
+        /// Returns the settings to use right now: this save's own copy if
+        /// a save is loaded, otherwise the global defaults. Lets every
+        /// other class just call this instead of null-checking Instance
+        /// itself.
+        /// </summary>
+        public static BuildPointsSettingsValues GetActiveSettings()
+        {
+            if (Instance?.Settings != null) return Instance.Settings;
+            BuildPointsConfig.EnsureLoaded();
+            return BuildPointsConfig.Defaults;
+        }
+
+        /// <summary>
+        /// Overwrites this save's settings with the mod-wide defaults,
+        /// re-reading settings.cfg first in case it's been hand-edited
+        /// since this save started. Wired to the "Reset to Global
+        /// Defaults" button in the Settings window.
+        /// </summary>
+        public void ResetSettingsToGlobalDefaults()
+        {
+            BuildPointsConfig.Load();
+            Settings.CopyFrom(BuildPointsConfig.Defaults);
         }
 
         public void FixedUpdate()
@@ -56,14 +92,11 @@ namespace BuildPoints
         /// </summary>
         public double GetCurrentAccrualRatePerSecond()
         {
-            var settings = HighLogic.CurrentGame?.Parameters?.CustomParams<BuildPointsSettings>();
-            if (settings == null) return 0;
-
             float vabLevel = ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.VehicleAssemblyBuilding);
             float sphLevel = ScenarioUpgradeableFacilities.GetFacilityLevel(SpaceCenterFacility.SpaceplaneHangar);
             float facilityLevel = Mathf.Max(vabLevel, sphLevel); // 0f..1f
 
-            double perDay = settings.baseAccrualPerDay * (1.0 + facilityLevel * (settings.facilityLevelBonusPercent / 100.0));
+            double perDay = Settings.baseAccrualPerDay * (1.0 + facilityLevel * (Settings.facilityLevelBonusPercent / 100.0));
             return perDay / GetHomeworldDayLengthSeconds();
         }
 
@@ -101,9 +134,7 @@ namespace BuildPoints
         public void Accrue(double amount)
         {
             if (amount <= 0) return;
-            var settings = HighLogic.CurrentGame?.Parameters?.CustomParams<BuildPointsSettings>();
-            double cap = settings != null ? settings.capacity : double.MaxValue;
-            CurrentPoints = Math.Min(CurrentPoints + amount, cap);
+            CurrentPoints = Math.Min(CurrentPoints + amount, Settings.capacity);
         }
 
         /// <summary>Attempts to spend points. Returns false (no state change) if insufficient.</summary>
@@ -115,11 +146,7 @@ namespace BuildPoints
             return true;
         }
 
-        public double GetCapacity()
-        {
-            var settings = HighLogic.CurrentGame?.Parameters?.CustomParams<BuildPointsSettings>();
-            return settings != null ? settings.capacity : 0;
-        }
+        public double GetCapacity() => Settings.capacity;
 
         /// <summary>
         /// Seconds of (in-game) time needed before CurrentPoints would reach
@@ -142,12 +169,12 @@ namespace BuildPoints
         /// Station's on-rails warp uses under the hood) and immediately
         /// grants the Build Points that would have accrued over that span.
         /// This is the "instant" alternative to WarpAndReturnController's
-        /// real-warp approach — see BuildPointsSettings.useInstantTimeSkip.
-        /// It works from inside the editor without needing to back out to
-        /// Tracking Station, but as a hard jump rather than incremental
-        /// warp, mods that do their own per-frame background simulation
-        /// (e.g. some life support mods) may not react to it the way they
-        /// would to a normal multi-second warp.
+        /// real-warp approach — see Settings.useInstantTimeSkip. It works
+        /// from inside the editor without needing to back out to Tracking
+        /// Station, but as a hard jump rather than incremental warp, mods
+        /// that do their own per-frame background simulation (e.g. some
+        /// life support mods) may not react to it the way they would to a
+        /// normal multi-second warp.
         /// </summary>
         public void SkipAheadSeconds(double seconds)
         {
@@ -171,6 +198,15 @@ namespace BuildPoints
             double lastUT = -1;
             node.TryGetValue("lastAccrualUT", ref lastUT);
             lastAccrualUT = lastUT;
+
+            // Seed from the current global defaults, then overwrite with
+            // this save's own stored values if it has any yet (new saves,
+            // or saves from before this feature existed, won't — they just
+            // keep the defaults as their per-save starting point).
+            BuildPointsConfig.EnsureLoaded();
+            Settings = BuildPointsConfig.Defaults.Clone();
+            ConfigNode settingsNode = node.GetNode("Settings");
+            if (settingsNode != null) Settings.Load(settingsNode);
         }
 
         public override void OnSave(ConfigNode node)
@@ -178,6 +214,9 @@ namespace BuildPoints
             base.OnSave(node);
             node.AddValue("currentPoints", CurrentPoints);
             node.AddValue("lastAccrualUT", lastAccrualUT);
+
+            ConfigNode settingsNode = node.AddNode("Settings");
+            Settings?.Save(settingsNode);
         }
     }
 }

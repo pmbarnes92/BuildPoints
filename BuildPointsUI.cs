@@ -7,6 +7,10 @@ namespace BuildPoints
     /// positioned near the stock Funds/Science/Reputation bar. Uses OnGUI
     /// for a first pass; a follow-up could anchor a proper UI Toolkit panel
     /// directly into the stock app bar the way RP-1 does.
+    ///
+    /// Visibility is controlled by this save's own
+    /// Settings.showBuildPointsDisplay, toggled from the Settings window
+    /// opened via the Space Center toolbar button (BuildPointsToolbar).
     /// </summary>
     [KSPAddon(KSPAddon.Startup.EveryScene, false)]
     public class BuildPointsUI : MonoBehaviour
@@ -25,6 +29,7 @@ namespace BuildPoints
             if (BuildPointsScenario.Instance == null) return;
             if (HighLogic.CurrentGame.Mode != Game.Modes.CAREER && HighLogic.CurrentGame.Mode != Game.Modes.SCIENCE_SANDBOX)
                 return;
+            if (!BuildPointsScenario.Instance.Settings.showBuildPointsDisplay) return;
 
             if (labelStyle == null)
             {

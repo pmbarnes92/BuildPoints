@@ -6,10 +6,10 @@ namespace BuildPoints
 	/// Refunds Build Points when a vessel is recovered. Cost is computed
 	/// with the same formula used to charge the vessel at launch
 	/// (BuildPointsCalculator.TryGetRecoveredVesselCost), then scaled by
-	/// the "Recovery refund (%)" setting. onVesselRecovered fires for
-	/// both the full recovery dialog and "quick recover" (right-clicking
-	/// a landed/splashed vessel near the Space Center), so both are
-	/// covered without extra hooks.
+	/// this save's "Recovery refund (%)" setting. onVesselRecovered fires
+	/// for both the full recovery dialog and "quick recover"
+	/// (right-clicking a landed/splashed vessel near the Space Center), so
+	/// both are covered without extra hooks.
 	///
 	/// NOTE: verify GameEvents.onVesselRecovered's signature against your
 	/// KSP version — it's EventData&lt;ProtoVessel, bool&gt; as of 1.12.x,
@@ -38,8 +38,8 @@ namespace BuildPoints
 			var scenario = BuildPointsScenario.Instance;
 			if (scenario == null) return;
 
-			var settings = HighLogic.CurrentGame?.Parameters?.CustomParams<BuildPointsSettings>();
-			if (settings == null || settings.recoveryRefundPercent <= 0f) return;
+			var settings = scenario.Settings;
+			if (settings.recoveryRefundPercent <= 0f) return;
 
 			if (!BuildPointsCalculator.TryGetRecoveredVesselCost(protoVessel, out double bpCost, out _, out _))
 				return;

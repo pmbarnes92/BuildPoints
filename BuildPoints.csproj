@@ -55,6 +55,10 @@
       <HintPath>$(KSPManaged)\UnityEngine.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.AnimationModule">
+      <HintPath>$(KSPManaged)\UnityEngine.AnimationModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>$(KSPManaged)\UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>
