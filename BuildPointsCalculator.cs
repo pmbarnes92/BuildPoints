@@ -71,13 +71,16 @@ namespace BuildPoints
 
 			SumPartCostsAndMass(availableParts, out double fundsCost, out double massTonnes);
 
-			breakdown = BuildBreakdown(BuildPointsScenario.GetActiveSettings(), fundsCost, partCount, massTonnes);
+			// In TryGetShipCostBreakdown (launch / editor):
+			breakdown = BuildBreakdown(BuildPointsScenario.GetActiveSettings(), fundsCost, partCount, massTonnes,
+			chargeLaunchOverhead: true);
 			return true;
 		}
 
 		/// <summary>
-		/// Same cost formula as TryGetCurrentShipCost, but applied to a
-		/// recovered vessel's ProtoVessel rather than a live editor
+		/// Same per-part / per-funds / per-mass formula as TryGetCurrentShipCost,
+		/// but WITHOUT the constant per-launch cost or the minimum-cost floor,
+		/// applied to a recovered vessel's ProtoVessel rather than a live editor
 		/// ShipConstruct — used to size the Build Points refund on
 		/// recovery. Like the editor path, this sums cost/mass off each
 		/// part's AvailablePart template (partInfo.partConfig) rather
@@ -112,7 +115,9 @@ namespace BuildPoints
 
 			SumPartCostsAndMass(availableParts, out fundsCost, out double massTonnes);
 
-			var breakdown = BuildBreakdown(BuildPointsScenario.GetActiveSettings(), fundsCost, partCount, massTonnes);
+			// In TryGetRecoveredVesselCost (recovery):
+			var breakdown = BuildBreakdown(BuildPointsScenario.GetActiveSettings(), fundsCost, partCount, massTonnes,
+				chargeLaunchOverhead: false);
 			bpCost = breakdown.total;
 			return true;
 		}
@@ -120,15 +125,22 @@ namespace BuildPoints
 		/// <summary>
 		/// cost = constantCost + (fundsCost * fundsCostWeight)
 		///        + (partCount * costPerPart) + (massTonnes * massCostWeight),
-		/// floored at minimumCraftCost. The refund handler multiplies this
-		/// result by recoveryRefundPercent — the floor applies before that
-		/// percentage, same as it would at launch.
+		/// floored at minimumCraftCost.
+		///
+		/// chargeLaunchOverhead = true (launch): the full formula above.
+		/// chargeLaunchOverhead = false (recovery): constantCost and the
+		/// minimumCraftCost floor are both skipped. They're per-launch charges,
+		/// and a craft that breaks into several recovered pieces would otherwise
+		/// refund them once per piece. Only the per-part, per-funds and per-mass
+		/// terms scale with what's actually being recovered.
+		/// The refund handler then multiplies the result by recoveryRefundPercent.
 		/// </summary>
-		private static BuildPointsCostBreakdown BuildBreakdown(BuildPointsSettingsValues settings, double fundsCost, int partCount, double massTonnes)
+		private static BuildPointsCostBreakdown BuildBreakdown(BuildPointsSettingsValues settings,
+			double fundsCost, int partCount, double massTonnes, bool chargeLaunchOverhead)
 		{
 			var b = new BuildPointsCostBreakdown
 			{
-				constant = settings.constantCost,
+				constant = chargeLaunchOverhead ? settings.constantCost : 0,
 				funds = fundsCost * settings.fundsCostWeight,
 				partCountCost = partCount * settings.costPerPart,
 				mass = massTonnes * settings.massCostWeight,
@@ -138,7 +150,12 @@ namespace BuildPoints
 			};
 
 			double raw = b.constant + b.funds + b.partCountCost + b.mass;
-			b.total = raw < settings.minimumCraftCost ? settings.minimumCraftCost : raw;
+
+			if (chargeLaunchOverhead)
+				b.total = raw < settings.minimumCraftCost ? settings.minimumCraftCost : raw;
+			else
+				b.total = raw; // no floor on recovery
+
 			return b;
 		}
 

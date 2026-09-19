@@ -5,7 +5,8 @@ namespace BuildPoints
 	/// <summary>
 	/// Refunds Build Points when a vessel is recovered. Cost is computed
 	/// with the same formula used to charge the vessel at launch
-	/// (BuildPointsCalculator.TryGetRecoveredVesselCost), then scaled by
+	/// (BuildPointsCalculator.TryGetRecoveredVesselCost)
+	/// minus the constant cost per launch, then scaled by
 	/// this save's "Recovery refund (%)" setting. onVesselRecovered fires
 	/// for both the full recovery dialog and "quick recover"
 	/// (right-clicking a landed/splashed vessel near the Space Center), so
