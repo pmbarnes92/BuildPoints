@@ -26,8 +26,21 @@ namespace BuildPoints
         /// <summary>Current banked Build Points.</summary>
         public double CurrentPoints { get; private set; }
 
-        /// <summary>This save's own settings — see class remarks.</summary>
-        public BuildPointsSettingsValues Settings { get; private set; }
+		/// <summary>
+		/// Saved top-left position of the on-screen Build Points window, in screen
+		/// pixels. Stored in this save's persistent file alongside the balance.
+		/// </summary>
+		public float DisplayX { get; private set; } = 260f;
+		public float DisplayY { get; private set; } = 8f;
+
+		public void SetDisplayPosition(float x, float y)
+		{
+			DisplayX = x;
+			DisplayY = y;
+		}
+
+		/// <summary>This save's own settings — see class remarks.</summary>
+		public BuildPointsSettingsValues Settings { get; private set; }
 
         // Universal time (in-game seconds) at which we last accrued points.
         // Using UT rather than real time means accrual is warp-safe and
@@ -238,7 +251,14 @@ namespace BuildPoints
                 CurrentPoints = Math.Min(BuildPointsConfig.Defaults.startingPoints, Settings.capacity);
             }
 
-            double lastUT = -1;
+			// Properties can't be passed by ref, so go through locals.
+			float displayX = DisplayX, displayY = DisplayY;
+			node.TryGetValue("displayX", ref displayX);
+			node.TryGetValue("displayY", ref displayY);
+			DisplayX = displayX;
+			DisplayY = displayY;
+
+			double lastUT = -1;
             node.TryGetValue("lastAccrualUT", ref lastUT);
             lastAccrualUT = lastUT;
         }
@@ -249,7 +269,10 @@ namespace BuildPoints
             node.AddValue("currentPoints", CurrentPoints);
             node.AddValue("lastAccrualUT", lastAccrualUT);
 
-            ConfigNode settingsNode = node.AddNode("Settings");
+			node.AddValue("displayX", DisplayX);
+			node.AddValue("displayY", DisplayY);
+
+			ConfigNode settingsNode = node.AddNode("Settings");
             Settings?.Save(settingsNode);
         }
     }
