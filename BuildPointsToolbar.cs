@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using KSP.UI.Screens;
 using UnityEngine;
 
@@ -21,6 +22,13 @@ namespace BuildPoints
     /// here: it only matters when a save is first created, so it's set in
     /// GlobalSettings.cfg.
     ///
+    /// Button creation: rather than reacting to the launcher's "ready"
+    /// event (which appeared to fire more than once in the editor and
+    /// produced duplicate buttons), each instance waits for the launcher
+    /// to be ready and adds its button exactly once. A static reference to
+    /// the last button added means that even if more than one instance of
+    /// this addon exists, only one button survives.
+    ///
     /// Uses stock ApplicationLauncher rather than a third-party toolbar
     /// mod (Blizzy's Toolbar, etc.) so nothing extra needs installing.
     /// </summary>
@@ -28,6 +36,8 @@ namespace BuildPoints
     public class BuildPointsToolbar : MonoBehaviour
     {
         private ApplicationLauncherButton button;
+        private static ApplicationLauncherButton sharedButton; // one button across all instances
+        private bool buttonAdded;
         private bool showWindow;
         private Rect windowRect = new Rect(300, 100, 360, 0);
         private bool relevantScene;
@@ -58,22 +68,44 @@ namespace BuildPoints
 
             GameScenes scene = HighLogic.LoadedScene;
             relevantScene = scene == GameScenes.SPACECENTER || scene == GameScenes.EDITOR;
+            Debug.Log($"[BuildPoints] Toolbar Awake, scene={scene}, id={GetInstanceID()}");
             if (!relevantScene) return;
 
-            GameEvents.onGUIApplicationLauncherReady.Add(AddButton);
-            GameEvents.onGUIApplicationLauncherDestroyed.Add(RemoveButton);
+            StartCoroutine(AddButtonWhenReady());
         }
 
         public void OnDestroy()
         {
-            GameEvents.onGUIApplicationLauncherReady.Remove(AddButton);
-            GameEvents.onGUIApplicationLauncherDestroyed.Remove(RemoveButton);
             RemoveButton();
+        }
+
+        private IEnumerator AddButtonWhenReady()
+        {
+            // NOTE: ApplicationLauncher.Ready is the static "launcher is up"
+            // flag as far as I recall; verify it exists in 1.12.5.
+            while (!ApplicationLauncher.Ready || ApplicationLauncher.Instance == null)
+                yield return null;
+
+            if (buttonAdded) yield break;
+            buttonAdded = true;
+            AddButton();
         }
 
         private void AddButton()
         {
-            if (!relevantScene || button != null || ApplicationLauncher.Instance == null) return;
+            if (!relevantScene || ApplicationLauncher.Instance == null) return;
+
+            Debug.Log($"[BuildPoints] Toolbar AddButton, id={GetInstanceID()}");
+
+            // Only ever one button: clear any left over from another instance
+            // before adding ours.
+            if (sharedButton != null)
+            {
+                ApplicationLauncher.Instance.RemoveModApplication(sharedButton);
+                sharedButton = null;
+            }
+            button = null;
+            showWindow = false;
 
             // NOTE: replace with a real 38x38 icon (load via
             // GameDatabase.Instance.GetTexture("BuildPoints/icon", false))
@@ -86,12 +118,14 @@ namespace BuildPoints
 
             button = ApplicationLauncher.Instance.AddModApplication(
                 OnToggleOn, OnToggleOff, null, null, null, null, scenes, icon);
+            sharedButton = button;
         }
 
         private void RemoveButton()
         {
             if (button == null || ApplicationLauncher.Instance == null) return;
             ApplicationLauncher.Instance.RemoveModApplication(button);
+            if (sharedButton == button) sharedButton = null;
             button = null;
         }
 
