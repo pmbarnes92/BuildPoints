@@ -42,6 +42,31 @@ namespace BuildPoints
         }
 
         /// <summary>
+        /// Single source of truth for "does Build Points apply to the
+        /// current game?" Used by the launch gate, the launch charge, the
+        /// on-screen readout, accrual, and recovery refunds, so they can
+        /// never disagree about which game modes are covered.
+        ///
+        /// To extend to sandbox later, add a case for Game.Modes.SANDBOX
+        /// here (ideally driven by an "enableInSandbox" setting).
+        /// </summary>
+        public static bool IsActiveForCurrentGame()
+        {
+            var game = HighLogic.CurrentGame;
+            if (game == null) return false;
+
+            switch (game.Mode)
+            {
+                case Game.Modes.CAREER:
+                case Game.Modes.SCIENCE_SANDBOX:
+                    return true;
+                // case Game.Modes.SANDBOX: return <enableInSandbox setting>;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
         /// Returns the settings to use right now: this save's own copy if
         /// a save is loaded, otherwise the global defaults. Same as
         /// BuildPointsConfig.Settings; kept so callers can use either.
@@ -64,7 +89,7 @@ namespace BuildPoints
         public void FixedUpdate()
         {
             if (HighLogic.LoadedScene == GameScenes.MAINMENU) return;
-            if (HighLogic.CurrentGame == null) return;
+            if (!IsActiveForCurrentGame()) return;
 
             double now = Planetarium.GetUniversalTime();
             if (lastAccrualUT < 0)

@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 namespace BuildPoints
 {
@@ -36,6 +36,8 @@ namespace BuildPoints
 
 		private void OnVesselRecovered(ProtoVessel protoVessel, bool quick)
 		{
+			if (!BuildPointsScenario.IsActiveForCurrentGame()) return;
+
 			var scenario = BuildPointsScenario.Instance;
 			if (scenario == null) return;
 

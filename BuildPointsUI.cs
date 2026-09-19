@@ -25,10 +25,8 @@ namespace BuildPoints
 
         public void OnGUI()
         {
-            if (HighLogic.CurrentGame == null) return;
+            if (!BuildPointsScenario.IsActiveForCurrentGame()) return;
             if (BuildPointsScenario.Instance == null) return;
-            if (HighLogic.CurrentGame.Mode != Game.Modes.CAREER && HighLogic.CurrentGame.Mode != Game.Modes.SCIENCE_SANDBOX)
-                return;
             if (!BuildPointsScenario.Instance.Settings.showBuildPointsDisplay) return;
 
             if (labelStyle == null)

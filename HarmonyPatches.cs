@@ -1,3 +1,4 @@
+using System;
 using HarmonyLib;
 using UnityEngine;
 
@@ -5,13 +6,12 @@ namespace BuildPoints
 {
     /// <summary>
     /// Installs the Harmony patches once at game start, and loads
-    /// BuildPointsConfig.Defaults from
-    /// GameData/BuildPoints/PluginData/settings.cfg (creating it with
-    /// built-in defaults on first run) so it's ready before any save needs
-    /// to seed its own settings from it. Harmony is the standard, safe way
-    /// to intercept a stock method (here, the editor's Launch action)
-    /// without hunting for a public GameEvent that fires early enough to
-    /// cancel the launch outright.
+    /// BuildPointsConfig.Defaults from GlobalSettings.cfg so it's ready
+    /// before any save needs to seed its own settings from it.
+    ///
+    /// Patching is wrapped in try/catch and logs every patched method, so a
+    /// failed patch shows up clearly in KSP.log instead of silently leaving
+    /// the launch gate uninstalled.
     /// </summary>
     [KSPAddon(KSPAddon.Startup.MainMenu, true)]
     public class BuildPointsBootstrap : MonoBehaviour
@@ -19,30 +19,44 @@ namespace BuildPoints
         public void Awake()
         {
             BuildPointsConfig.EnsureLoaded();
+            Debug.Log("[BuildPoints] Bootstrap running, applying Harmony patches");
 
-            var harmony = new Harmony("com.buildpoints.mod");
-            harmony.PatchAll();
+            try
+            {
+                var harmony = new Harmony("com.buildpoints.mod");
+                harmony.PatchAll();
+                foreach (var m in harmony.GetPatchedMethods())
+                    Debug.Log("[BuildPoints] Patched: " + m.DeclaringType + "." + m.Name);
+            }
+            catch (Exception e)
+            {
+                Debug.LogError("[BuildPoints] Harmony patching failed: " + e);
+            }
+
             DontDestroyOnLoad(this);
         }
     }
 
     /// <summary>
-    /// Prefix patch on the editor's launch entry point. Returning false from
-    /// a Harmony Prefix cancels the original method, so an insufficient
-    /// balance simply blocks the launch with a warning popup instead of
-    /// spawning the vessel and having to revert it.
+    /// Launch GATE. Prefix on EditorLogic.launchVessel(string) — the real
+    /// implementation (the parameterless launchVessel() just forwards to it,
+    /// so it must not be patched too). Runs when the player clicks Launch,
+    /// before any crew / pre-flight dialogs.
     ///
-    /// NOTE: "launchVessel" is the method name as of KSP 1.12.x in the
-    /// decompiled Assembly-CSharp.dll. Confirm this against your own copy
-    /// with ILSpy/dnSpy before shipping — if the signature differs, adjust
-    /// the [HarmonyPatch] attribute (method name and/or argument types)
-    /// accordingly.
+    /// This only CHECKS affordability. Returning false cancels the launch
+    /// and shows a popup; returning true lets the launch continue. The
+    /// actual charge happens later, in LaunchChargePatch, once the launch
+    /// is confirmed — so backing out of a pre-flight warning costs nothing.
     /// </summary>
-    [HarmonyPatch(typeof(EditorLogic), "launchVessel")]
+    [HarmonyPatch(typeof(EditorLogic), "launchVessel", new Type[] { typeof(string) })]
     public static class LaunchGatePatch
     {
         public static bool Prefix()
         {
+            Debug.Log("[BuildPoints] launchVessel(string) prefix fired");
+
+            if (!BuildPointsScenario.IsActiveForCurrentGame()) return true;
+
             var scenario = BuildPointsScenario.Instance;
             if (scenario == null) return true; // fail open if not loaded
 
@@ -53,10 +67,7 @@ namespace BuildPoints
             double cap = scenario.GetCapacity();
 
             if (bpCost <= have)
-            {
-                scenario.TrySpend(bpCost);
-                return true; // paid — proceed with the real launch
-            }
+                return true; // affordable; charged later, on confirmed launch
 
             if (bpCost > cap)
             {
@@ -144,6 +155,42 @@ namespace BuildPoints
             if (days > 0) return $"{days}d {hours}h";
             if (hours > 0) return $"{hours}h {minutes}m";
             return $"{Mathf.Max(minutes, 1)}m";
+        }
+    }
+
+    /// <summary>
+    /// Launch CHARGE. Prefix on EditorLogic.proceedWithVesselLaunch, which the
+    /// stock pre-flight check calls only once the launch is confirmed (all
+    /// tests passed, or the player clicked through a warning). The cancel
+    /// path (abortLaunch) never reaches it, so cancelling costs nothing.
+    ///
+    /// A void Prefix always lets the original method run. That's deliberate:
+    /// the editor is input-locked at this point, and blocking here could
+    /// leave the lock stuck. If the charge somehow fails it is logged and the
+    /// launch proceeds.
+    /// </summary>
+    [HarmonyPatch(typeof(EditorLogic), "proceedWithVesselLaunch")]
+    public static class LaunchChargePatch
+    {
+        public static void Prefix()
+        {
+            Debug.Log("[BuildPoints] proceedWithVesselLaunch prefix fired");
+
+            if (!BuildPointsScenario.IsActiveForCurrentGame()) return;
+
+            var scenario = BuildPointsScenario.Instance;
+            if (scenario == null) return;
+
+            if (!BuildPointsCalculator.TryGetCurrentShipCost(out double bpCost, out _, out _))
+            {
+                Debug.LogWarning("[BuildPoints] Couldn't compute ship cost at launch; not charging");
+                return;
+            }
+
+            if (scenario.TrySpend(bpCost))
+                Debug.Log($"[BuildPoints] Charged {bpCost:0.0} BP for launch");
+            else
+                Debug.LogWarning($"[BuildPoints] Couldn't charge {bpCost:0.0} BP at launch (balance {scenario.CurrentPoints:0.0})");
         }
     }
 }
