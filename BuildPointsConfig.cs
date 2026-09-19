@@ -1,85 +1,115 @@
 using System;
 using System.IO;
+using System.Reflection;
 using UnityEngine;
 
 namespace BuildPoints
 {
     /// <summary>
-    /// Loads the mod-wide *default* settings from
-    /// GameData/BuildPoints/PluginData/settings.cfg. This file is meant to
-    /// be hand-edited — by you, or by anyone installing the mod — and
-    /// nothing in-game ever writes to it except to create it with built-in
-    /// defaults on first run.
+    /// Loads the mod's default settings from GlobalSettings.cfg, which sits in
+    /// the mod's own folder, one level above Plugins (see ConfigPath).
+    /// That file ships with the mod and is read-only as far as the mod is
+    /// concerned: it is never generated or written to. In-game changes
+    /// (the Space Center toolbar's Apply button) go into the current save's
+    /// own copy of the settings, stored in that save's persistent file by
+    /// BuildPointsScenario.
     ///
-    /// It only supplies the starting values a save is seeded with when
-    /// first created; from then on each save keeps its own independent
-    /// copy (BuildPointsScenario.Settings), so editing this file later
-    /// doesn't retroactively change a save already in progress unless the
-    /// player explicitly hits "Reset to Global Defaults" in the in-game
-    /// Settings window.
+    /// Two things live here:
+    ///   Defaults — the values from GlobalSettings.cfg. New saves are seeded
+    ///              from these, and startingPoints is read from here.
+    ///   Settings — the values actually in effect right now: the loaded
+    ///              save's own copy if a save is loaded, otherwise Defaults.
+    ///              This is what the rest of the mod should read.
+    ///
+    /// If the file is missing or unreadable, Defaults stays at the built-in
+    /// values in BuildPointsSettingsValues and a warning goes to KSP.log.
     /// </summary>
     public static class BuildPointsConfig
     {
-        public static BuildPointsSettingsValues Defaults { get; private set; }
+        private const string NodeName = "BuildPointsSettings";
 
-        private static string ConfigPath =>
-            Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "BuildPoints", "PluginData", "settings.cfg");
+        private static bool loaded;
 
-        /// <summary>Loads once; safe to call from anywhere that touches the defaults.</summary>
+        /// <summary>The values from GlobalSettings.cfg. Never null.</summary>
+        public static BuildPointsSettingsValues Defaults { get; private set; } = new BuildPointsSettingsValues();
+
+        /// <summary>Settings in effect right now — see class remarks.</summary>
+        public static BuildPointsSettingsValues Settings
+        {
+            get
+            {
+                EnsureLoaded();
+                return BuildPointsScenario.Instance?.Settings ?? Defaults;
+            }
+        }
+
+        private static string configPath;
+
+        /// <summary>
+        /// GlobalSettings.cfg sits one folder above the folder this DLL is in
+        /// (mod folder / Plugins / BuildPoints.dll), so it's found wherever
+        /// the mod folder is, whatever it's named. Falls back to
+        /// GameData/BuildPoints/ if the DLL's own location can't be determined.
+        /// </summary>
+        private static string ConfigPath => configPath ??= ResolveConfigPath();
+
+        private static string ResolveConfigPath()
+        {
+            try
+            {
+                string dllPath = Assembly.GetExecutingAssembly().Location;
+                if (!string.IsNullOrEmpty(dllPath))
+                {
+                    string pluginsDir = Path.GetDirectoryName(dllPath);
+                    string modDir = pluginsDir != null ? Path.GetDirectoryName(pluginsDir) : null;
+                    if (modDir != null) return Path.Combine(modDir, "GlobalSettings.cfg");
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[BuildPoints] Couldn't locate the plugin folder, falling back to GameData/BuildPoints: " + e);
+            }
+
+            return Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "BuildPoints", "GlobalSettings.cfg");
+        }
+
+        /// <summary>Loads once; safe to call from anywhere that touches Defaults.</summary>
         public static void EnsureLoaded()
         {
-            if (Defaults != null) return;
+            if (loaded) return;
             Load();
         }
 
         /// <summary>
-        /// (Re-)reads settings.cfg from disk into Defaults, discarding any
-        /// previous in-memory copy. Called at bootstrap, and again by
-        /// "Reset to Global Defaults" so that action picks up any hand
-        /// edits made since the game started.
+        /// (Re-)reads GlobalSettings.cfg from disk into Defaults. Called at
+        /// bootstrap, and by "Reset to Global Defaults" so that action picks
+        /// up any hand edits made since the game started.
         /// </summary>
         public static void Load()
         {
-            Defaults ??= new BuildPointsSettingsValues();
+            loaded = true;
+            var fresh = new BuildPointsSettingsValues();
 
             try
             {
                 if (!File.Exists(ConfigPath))
                 {
-                    // First run: write the built-in defaults out so the file
-                    // exists and is there to hand-edit (or share, or diff)
-                    // afterward.
-                    Save();
-                    return;
+                    Debug.LogWarning("[BuildPoints] GlobalSettings.cfg not found at " + ConfigPath +
+                                     " — using built-in defaults.");
                 }
-
-                ConfigNode file = ConfigNode.Load(ConfigPath);
-                ConfigNode node = file?.GetNode("BuildPointsSettings") ?? file;
-                if (node != null) Defaults.Load(node);
+                else
+                {
+                    ConfigNode file = ConfigNode.Load(ConfigPath);
+                    ConfigNode node = file?.GetNode(NodeName) ?? file;
+                    if (node != null) fresh.Load(node);
+                }
             }
             catch (Exception e)
             {
-                Debug.LogError("[BuildPoints] Failed to load settings.cfg, using built-in defaults: " + e);
+                Debug.LogError("[BuildPoints] Failed to load GlobalSettings.cfg, using built-in defaults: " + e);
             }
-        }
 
-        /// <summary>Writes Defaults out to settings.cfg. Only happens on first run, to create the file.</summary>
-        private static void Save()
-        {
-            try
-            {
-                string dir = Path.GetDirectoryName(ConfigPath);
-                if (dir != null) Directory.CreateDirectory(dir);
-
-                ConfigNode root = new ConfigNode();
-                ConfigNode node = root.AddNode("BuildPointsSettings");
-                Defaults.Save(node);
-                root.Save(ConfigPath);
-            }
-            catch (Exception e)
-            {
-                Debug.LogError("[BuildPoints] Failed to save settings.cfg: " + e);
-            }
+            Defaults = fresh;
         }
     }
 }

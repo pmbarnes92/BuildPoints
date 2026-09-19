@@ -1,17 +1,21 @@
 namespace BuildPoints
 {
     /// <summary>
-    /// The full set of mod tunables. Used two ways: as the mod-wide
-    /// defaults loaded from settings.cfg (BuildPointsConfig.Defaults), and
-    /// as the live, per-save values a given game actually plays with
-    /// (BuildPointsScenario.Settings). A new save starts as a copy of the
-    /// global defaults; after that the two are independent — editing
-    /// settings.cfg by hand or editing the in-game Settings window each
-    /// only touch their own copy, until the player explicitly hits
-    /// "Reset to Global Defaults".
+    /// The full set of mod tunables. Used two ways: as the defaults loaded
+    /// from GlobalSettings.cfg (BuildPointsConfig.Defaults), and as the live,
+    /// per-save values a given game actually plays with
+    /// (BuildPointsScenario.Settings, stored in that save's persistent file).
+    /// A new save starts as a copy of the defaults; after that the two are
+    /// independent until the player hits "Reset to Global Defaults".
     /// </summary>
     public class BuildPointsSettingsValues
     {
+        // --- Starting balance ---
+        // Only meaningful for a brand-new save, and only ever read from the
+        // defaults (GlobalSettings.cfg). It is deliberately not written into
+        // a save's own settings (see Save) and not shown in the toolbar.
+        public float startingPoints = 100f;
+
         // --- Accrual ---
         public float baseAccrualPerDay = 5f;
         public float facilityLevelBonusPercent = 50f;
@@ -46,6 +50,7 @@ namespace BuildPoints
 
         public void CopyFrom(BuildPointsSettingsValues other)
         {
+            startingPoints = other.startingPoints;
             baseAccrualPerDay = other.baseAccrualPerDay;
             facilityLevelBonusPercent = other.facilityLevelBonusPercent;
             capacity = other.capacity;
@@ -61,6 +66,7 @@ namespace BuildPoints
 
         public void Load(ConfigNode node)
         {
+            ReadFloat(node, "startingPoints", ref startingPoints);
             ReadFloat(node, "baseAccrualPerDay", ref baseAccrualPerDay);
             ReadFloat(node, "facilityLevelBonusPercent", ref facilityLevelBonusPercent);
             ReadFloat(node, "capacity", ref capacity);
@@ -74,6 +80,10 @@ namespace BuildPoints
             ReadBool(node, "showBuildPointsDisplay", ref showBuildPointsDisplay);
         }
 
+        // Writes a save's own settings. startingPoints is intentionally left
+        // out: it only matters at save creation and always comes from
+        // GlobalSettings.cfg, so persisting it would just leave a stale copy
+        // in the save file.
         public void Save(ConfigNode node)
         {
             node.AddValue("baseAccrualPerDay", baseAccrualPerDay);

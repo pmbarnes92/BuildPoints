@@ -10,10 +10,12 @@ namespace BuildPoints
     /// in flight.
     ///
     /// Also owns this save's own copy of the mod's settings (Settings) —
-    /// seeded from BuildPointsConfig.Defaults the first time this save is
-    /// created, then persisted and edited independently of the global
-    /// settings.cfg file from here on, the same way CurrentPoints already
-    /// persists per-save.
+    /// seeded from BuildPointsConfig.Defaults (GlobalSettings.cfg) the first
+    /// time this save is created, then stored in the save's persistent file
+    /// via OnSave/OnLoad, the same way CurrentPoints is. The Space Center
+    /// toolbar's Apply button edits this copy, never GlobalSettings.cfg.
+    ///
+    /// A brand-new save's balance starts at the global startingPoints.
     /// </summary>
     [KSPScenario(ScenarioCreationOptions.AddToAllGames,
         GameScenes.SPACECENTER, GameScenes.EDITOR, GameScenes.FLIGHT, GameScenes.TRACKSTATION)]
@@ -41,22 +43,17 @@ namespace BuildPoints
 
         /// <summary>
         /// Returns the settings to use right now: this save's own copy if
-        /// a save is loaded, otherwise the global defaults. Lets every
-        /// other class just call this instead of null-checking Instance
-        /// itself.
+        /// a save is loaded, otherwise the global defaults. Same as
+        /// BuildPointsConfig.Settings; kept so callers can use either.
         /// </summary>
-        public static BuildPointsSettingsValues GetActiveSettings()
-        {
-            if (Instance?.Settings != null) return Instance.Settings;
-            BuildPointsConfig.EnsureLoaded();
-            return BuildPointsConfig.Defaults;
-        }
+        public static BuildPointsSettingsValues GetActiveSettings() => BuildPointsConfig.Settings;
 
         /// <summary>
-        /// Overwrites this save's settings with the mod-wide defaults,
-        /// re-reading settings.cfg first in case it's been hand-edited
-        /// since this save started. Wired to the "Reset to Global
-        /// Defaults" button in the Settings window.
+        /// Overwrites this save's settings with the defaults from
+        /// GlobalSettings.cfg, re-reading the file first in case it's been
+        /// hand-edited since the game started. Wired to the "Reset to Global
+        /// Defaults" button in the Settings window. Does not touch the
+        /// Build Points balance.
         /// </summary>
         public void ResetSettingsToGlobalDefaults()
         {
@@ -191,22 +188,34 @@ namespace BuildPoints
         public override void OnLoad(ConfigNode node)
         {
             base.OnLoad(node);
-            double points = 0;
-            node.TryGetValue("currentPoints", ref points);
-            CurrentPoints = points;
+            BuildPointsConfig.EnsureLoaded();
+
+            // Seed from the current global defaults, then overwrite with
+            // this save's own stored values if it has any yet (new saves
+            // won't — they just keep the defaults as their starting point).
+            Settings = BuildPointsConfig.Defaults.Clone();
+            ConfigNode settingsNode = node.GetNode("Settings");
+            if (settingsNode != null) Settings.Load(settingsNode);
+
+            if (node.HasValue("currentPoints"))
+            {
+                double points = 0;
+                node.TryGetValue("currentPoints", ref points);
+                CurrentPoints = points;
+            }
+            else
+            {
+                // No stored balance yet: a brand-new save (or one that had
+                // this mod added mid-game). Seed it from startingPoints in
+                // GlobalSettings.cfg, capped at this save's storage cap.
+                // Existing saves never hit this branch, so changing
+                // startingPoints later doesn't touch a save in progress.
+                CurrentPoints = Math.Min(BuildPointsConfig.Defaults.startingPoints, Settings.capacity);
+            }
 
             double lastUT = -1;
             node.TryGetValue("lastAccrualUT", ref lastUT);
             lastAccrualUT = lastUT;
-
-            // Seed from the current global defaults, then overwrite with
-            // this save's own stored values if it has any yet (new saves,
-            // or saves from before this feature existed, won't — they just
-            // keep the defaults as their per-save starting point).
-            BuildPointsConfig.EnsureLoaded();
-            Settings = BuildPointsConfig.Defaults.Clone();
-            ConfigNode settingsNode = node.GetNode("Settings");
-            if (settingsNode != null) Settings.Load(settingsNode);
         }
 
         public override void OnSave(ConfigNode node)

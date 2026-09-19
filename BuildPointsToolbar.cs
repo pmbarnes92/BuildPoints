@@ -1,3 +1,4 @@
+using System;
 using KSP.UI.Screens;
 using UnityEngine;
 
@@ -12,11 +13,13 @@ namespace BuildPoints
     /// button plumbing.
     ///
     /// The Settings window edits this save's own copy of the settings
-    /// (BuildPointsScenario.Instance.Settings) — changes here only affect
-    /// the current game, the same way editing CurrentPoints wouldn't touch
-    /// any other save. GameData/BuildPoints/PluginData/settings.cfg (hand
-    /// edited outside the game) supplies the defaults new saves start
-    /// from; "Reset to Global Defaults" below re-applies it to this save.
+    /// (BuildPointsScenario.Instance.Settings). Apply updates that copy and
+    /// immediately saves the game so the values land in the save's
+    /// persistent file. GlobalSettings.cfg is never touched — it only
+    /// supplies the defaults new saves start from, and "Reset to Global
+    /// Defaults" re-applies it to this save. startingPoints isn't shown
+    /// here: it only matters when a save is first created, so it's set in
+    /// GlobalSettings.cfg.
     ///
     /// Uses stock ApplicationLauncher rather than a third-party toolbar
     /// mod (Blizzy's Toolbar, etc.) so nothing extra needs installing.
@@ -30,7 +33,11 @@ namespace BuildPoints
         private bool relevantScene;
 
         // --- Settings window state (Space Center only) ---
+        // Everything is staged here and only copied into this save's
+        // settings when Apply is pressed.
         private string[] textFields;
+        private bool pendingShowDisplay;
+        private bool pendingInstantSkip;
 
         private static readonly string[] FieldLabels =
         {
@@ -91,7 +98,7 @@ namespace BuildPoints
         private void OnToggleOn()
         {
             showWindow = true;
-            if (HighLogic.LoadedScene == GameScenes.SPACECENTER) RefreshTextFieldsFromSettings();
+            if (HighLogic.LoadedScene == GameScenes.SPACECENTER) RefreshFieldsFromSettings();
         }
 
         private void OnToggleOff() => showWindow = false;
@@ -102,7 +109,7 @@ namespace BuildPoints
             button?.SetFalse(false);
         }
 
-        private void RefreshTextFieldsFromSettings()
+        private void RefreshFieldsFromSettings()
         {
             var s = BuildPointsScenario.GetActiveSettings();
             textFields = new[]
@@ -117,6 +124,8 @@ namespace BuildPoints
                 s.minimumCraftCost.ToString("0.###"),
                 s.recoveryRefundPercent.ToString("0.###")
             };
+            pendingShowDisplay = s.showBuildPointsDisplay;
+            pendingInstantSkip = s.useInstantTimeSkip;
         }
 
         public void OnGUI()
@@ -135,16 +144,15 @@ namespace BuildPoints
 
         private void DrawSettingsWindow(int id)
         {
-            if (textFields == null) RefreshTextFieldsFromSettings();
-            var s = BuildPointsScenario.GetActiveSettings();
+            if (textFields == null) RefreshFieldsFromSettings();
 
             GUILayout.BeginVertical();
 
-            GUILayout.Label("Applies to this save only. Edit settings.cfg (GameData/BuildPoints/" +
-                             "PluginData) to change what new saves start with.");
+            GUILayout.Label("Applies to this save only. Edit GlobalSettings.cfg (in the mod's folder) " +
+                             "to change what new saves start with, including starting Build Points.");
             GUILayout.Space(6);
 
-            s.showBuildPointsDisplay = GUILayout.Toggle(s.showBuildPointsDisplay, "Show Build Points display");
+            pendingShowDisplay = GUILayout.Toggle(pendingShowDisplay, "Show Build Points display");
 
             GUILayout.Space(8);
 
@@ -155,18 +163,18 @@ namespace BuildPoints
             }
 
             GUILayout.Space(4);
-            s.useInstantTimeSkip = GUILayout.Toggle(s.useInstantTimeSkip,
+            pendingInstantSkip = GUILayout.Toggle(pendingInstantSkip,
                 "Use instant time-skip (off = real TimeWarp)");
 
             GUILayout.Space(8);
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Apply"))
             {
-                ApplyTextFieldsToSettings();
+                ApplyAndSave();
             }
             if (GUILayout.Button("Revert"))
             {
-                RefreshTextFieldsFromSettings();
+                RefreshFieldsFromSettings();
             }
             GUILayout.EndHorizontal();
 
@@ -174,7 +182,8 @@ namespace BuildPoints
             if (GUILayout.Button("Reset to Global Defaults"))
             {
                 BuildPointsScenario.Instance?.ResetSettingsToGlobalDefaults();
-                RefreshTextFieldsFromSettings();
+                RefreshFieldsFromSettings();
+                SaveToPersistentFile();
             }
             if (GUILayout.Button("Close"))
             {
@@ -186,7 +195,7 @@ namespace BuildPoints
             GUI.DragWindow();
         }
 
-        private void ApplyTextFieldsToSettings()
+        private void ApplyAndSave()
         {
             var s = BuildPointsScenario.GetActiveSettings();
             s.baseAccrualPerDay = ParseOrKeep(textFields[0], s.baseAccrualPerDay);
@@ -198,16 +207,49 @@ namespace BuildPoints
             s.massCostWeight = ParseOrKeep(textFields[6], s.massCostWeight);
             s.minimumCraftCost = ParseOrKeep(textFields[7], s.minimumCraftCost);
             s.recoveryRefundPercent = ParseOrKeep(textFields[8], s.recoveryRefundPercent);
+            s.showBuildPointsDisplay = pendingShowDisplay;
+            s.useInstantTimeSkip = pendingInstantSkip;
 
-            // These now live only in memory on this save's Settings object,
-            // exactly like CurrentPoints does — they get written to disk the
-            // next time the game itself saves (quicksave, autosave, etc.),
-            // via BuildPointsScenario.OnSave.
+            SaveToPersistentFile();
 
             // Re-sync the boxes from the (possibly-rejected) parsed values,
             // so a bad entry snaps back to the last good number instead of
             // silently keeping invalid text on screen.
-            RefreshTextFieldsFromSettings();
+            RefreshFieldsFromSettings();
+        }
+
+        /// <summary>
+        /// Saves the game right now so this save's settings (stored by
+        /// BuildPointsScenario.OnSave) land in its persistent file instead of
+        /// waiting for the next autosave/quicksave. If the save fails, the
+        /// new values still apply this session and get written on the next
+        /// normal save.
+        ///
+        /// NOTE: verify GamePersistence.SaveGame's signature and
+        /// Game.Updated() against your KSP version. Updated() is there so the
+        /// scenario's OnSave has definitely run before the file is written;
+        /// after your first Apply, open persistent.sfs and confirm the
+        /// BuildPointsScenario "Settings" node shows the new values.
+        /// </summary>
+        private static void SaveToPersistentFile()
+        {
+            bool saved = false;
+            try
+            {
+                HighLogic.CurrentGame.Updated();
+                GamePersistence.SaveGame("persistent", HighLogic.SaveFolder, SaveMode.OVERWRITE);
+                saved = true;
+            }
+            catch (Exception e)
+            {
+                Debug.LogError("[BuildPoints] Failed to save persistent file after settings change: " + e);
+            }
+
+            ScreenMessages.PostScreenMessage(
+                saved
+                    ? "Build Points settings saved to this save."
+                    : "Settings applied, but the save file couldn't be written (see KSP.log). They'll be saved with the next game save.",
+                4f, ScreenMessageStyle.UPPER_CENTER);
         }
 
         /// <summary>
